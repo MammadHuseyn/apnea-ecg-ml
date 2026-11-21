@@ -1,6 +1,8 @@
 import numpy as np
 import neurokit2 as nk
 import pandas as pd
+from src.data import load_ecg, load_labels
+
 
 def detect_rpeaks(ecg, fs=100):
     cleaned = nk.ecg_clean(ecg, sampling_rate=fs)
@@ -40,3 +42,18 @@ def minute_feats(rr_df, t0):
     f["hr_mean"] = (60 / rr_m).mean()
 
     return f
+
+def record_feats(rec, fs=100):
+    ecg = load_ecg(rec)
+    labels = load_labels(rec)
+    peaks = detect_rpeaks(ecg, fs)
+    rr_df = rr_intervals(peaks, fs)
+
+    rows = []
+    for _, label in labels.iterrows():
+        f = minute_feats(rr_df, label.start/fs)
+        f["record"] = rec
+        f["minute"] = label.minute
+        f["label"] = label.label
+        rows.append(f)
+    return pd.DataFrame(rows)
