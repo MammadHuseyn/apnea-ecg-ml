@@ -1,4 +1,4 @@
-apnea-ecg-ml/
+```apnea-ecg-ml/
 ├── data/
 │   ├── raw/            # PhysioNet files (NOT committed)
 │   └── processed/      # features.parquet etc.
@@ -16,4 +16,4 @@ apnea-ecg-ml/
 │   └── figures/        # saved plots for report/slides
 ├── requirements.txt
 ├── .gitignore
-└── README.md
+└── README.md```
