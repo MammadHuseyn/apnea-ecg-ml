@@ -10,3 +10,4 @@ neurokit2
 mlflow
 ipykernel
 jupyter
+wandb
