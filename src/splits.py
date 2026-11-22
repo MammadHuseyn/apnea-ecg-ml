@@ -2,7 +2,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
-from data import LEARNING, PROCESSED, record_group
+from src.data import LEARNING, PROCESSED, record_group
 
 N_SPLITS = 5
 SEED = 42
