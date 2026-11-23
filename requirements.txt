@@ -13,3 +13,4 @@ tqdm
 ipykernel
 jupyter
 wandb
+tqdm
