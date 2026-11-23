@@ -12,7 +12,7 @@ from tqdm.auto import tqdm
 from src.data import PROCESSED
 from src.dl_dataset import ApneaDataset, load_cache
 from src.dl_models import ApneaSeqNet
-from src.eval import evaluate_and_log
+from src.eval import WANDB_ENTITY, WANDB_PROJECT, evaluate_and_log, fetch_oof_threshold
 
 ROOT = Path(__file__).resolve().parents[1]
 CKPT_DIR = ROOT / "models"
@@ -57,6 +57,7 @@ def train_fold(
     patience: int = 6,
     seed: int = 42,
     fold: int | None = None,
+    wandb_run=None,
 ):
     seed_everything(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -92,6 +93,7 @@ def train_fold(
     for epoch in range(1, epochs + 1):
         optimizer.train()
         model.train()
+        epoch_loss, n_batches = 0.0, 0
         with tqdm(
             tr_loader,
             desc=f"{tag}ep {epoch:02d}/{epochs}",
@@ -108,7 +110,10 @@ def train_fold(
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
-                bar.set_postfix_str(f"loss={loss.item():.4f}")
+                loss_val = loss.item()
+                epoch_loss += loss_val
+                n_batches += 1
+                bar.set_postfix_str(f"loss={loss_val:.4f}")
 
         # Eval-mode weights are the ones used for inference, so validation and
         # checkpointing must both happen after optimizer.eval().
@@ -122,6 +127,15 @@ def train_fold(
         else:
             wait += 1
         tqdm.write(f"{tag}ep {epoch:02d} val_auc={auc:.4f} best={best_auc:.4f} wait={wait}/{patience}")
+        if wandb_run is not None:
+            wandb_run.log({
+                "fold": fold,
+                "epoch": epoch,
+                "epoch/loss": epoch_loss / max(n_batches, 1),
+                "epoch/val_auc": auc,
+                "epoch/best_auc": best_auc,
+                "epoch/patience_wait": wait,
+            })
         if wait >= patience:
             break
 
@@ -145,8 +159,33 @@ def run_cv_experiment(
 
     CKPT_DIR.mkdir(parents=True, exist_ok=True)
     oof_probs = np.zeros(len(folds_df), dtype=np.float32)
+    folds = sorted(set(folds_df[split_col].to_numpy()))
 
-    for fold in range(5):
+    cfg = {
+        "mode": mode,
+        "context_mins": context_mins,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "lr": lr,
+        "split_col": split_col,
+        "n_folds": len(folds),
+        "optimizer": "AdamWScheduleFree(r=0.9, wd=1e-2, warmup=1 epoch)",
+        "amp_dtype": str(resolve_amp_dtype(torch.device("cuda" if torch.cuda.is_available() else "cpu"))),
+    }
+
+    wb_run = None
+    if use_wandb:
+        import wandb
+
+        wb_run = wandb.init(
+            project=WANDB_PROJECT,
+            entity=WANDB_ENTITY,
+            name=f"{run_name}_{split_col}",
+            config={"model": run_name, **cfg},
+            reinit="finish_previous",
+        )
+
+    for fold in folds:
         tr_mask = folds_df[split_col].to_numpy() != fold
         va_mask = ~tr_mask
         va_probs, state, auc = train_fold(
@@ -158,20 +197,16 @@ def run_cv_experiment(
             epochs=epochs,
             batch_size=batch_size,
             lr=lr,
-            seed=42 + fold,
-            fold=fold,
+            seed=42 + int(fold),
+            fold=int(fold),
+            wandb_run=wb_run,
         )
         oof_probs[va_mask] = va_probs
         torch.save(state, CKPT_DIR / f"{run_name}_{split_col}_f{fold}.pt")
         tqdm.write(f"  fold {fold} best val AUC = {auc:.4f}")
+        if wb_run is not None:
+            wb_run.log({"fold": int(fold), "fold/val_auc_best": auc})
 
-    cfg = {
-        "mode": mode,
-        "context_mins": context_mins,
-        "epochs": epochs,
-        "batch_size": batch_size,
-        "lr": lr,
-    }
     metrics = evaluate_and_log(
         folds_df,
         oof_probs,
@@ -179,7 +214,11 @@ def run_cv_experiment(
         split_type=split_col,
         config=cfg,
         use_wandb=use_wandb,
+        wandb_run=wb_run,
     )
+    if wb_run is not None:
+        print(f"  wandb -> {wb_run.url}")
+        wb_run.finish()
     return oof_probs, metrics
 
 
@@ -187,14 +226,19 @@ def eval_heldout_test(
     mode: str,
     context_mins: int,
     run_name: str,
-    threshold: float,
+    threshold: float | None = None,
     use_wandb: bool = True,
+    wandb_project: str = WANDB_PROJECT,
     cache: dict | None = None,
 ):
     """Run ONCE after locking hyperparameters on patient_fold CV."""
     test_df = pd.read_csv(PROCESSED / "test_clean.csv")
     if cache is None:
         cache = load_cache(test_df["record"].unique())
+
+    if threshold is None:
+        threshold = fetch_oof_threshold(run_name, project=wandb_project)
+        print(f"Fetched OOF threshold for {run_name} from W&B: {threshold:.4f}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ds = ApneaDataset(test_df, cache, mode=mode, context_mins=context_mins, augment=False)
