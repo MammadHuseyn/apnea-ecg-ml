@@ -8,9 +8,35 @@ from sklearn.metrics import (
     f1_score,
     roc_auc_score,
 )
+import wandb
 
 ROOT = Path(__file__).resolve().parents[1]
 PREDS_DIR = ROOT / "reports" / "preds"
+
+WANDB_ENTITY = "emammadli"
+WANDB_PROJECT = "apnea-ecg-ml"
+
+def fetch_oof_threshold(
+    run_name: str,
+    split_type: str = "patient_fold",
+    project: str = "apnea-ecg-csci4734",
+    entity: str | None = None,
+) -> float:
+    """Fetch the locked OOF threshold from the newest finished W&B CV run."""
+    
+    api = wandb.Api()
+    path = f"{entity}/{project}" if entity else project
+    target = f"{run_name}_{split_type}"
+
+    runs = [
+        r for r in api.runs(path)
+        if r.state == "finished" and r.name == target and "threshold" in r.summary
+    ]
+    if not runs:
+        raise ValueError(f"No finished W&B run with 'threshold' found for '{target}'.")
+
+    latest = max(runs, key=lambda r: r.created_at)
+    return float(latest.summary["threshold"])
 
 
 def find_best_threshold(y_true: np.ndarray, y_prob: np.ndarray) -> float:
@@ -70,9 +96,16 @@ def evaluate_and_log(
     threshold: float | None = None,
     config: dict | None = None,
     use_wandb: bool = True,
-    wandb_project: str = "apnea-ecg-csci4734",
+    wandb_entity: str = WANDB_ENTITY,
+    wandb_project: str = WANDB_PROJECT,
+    wandb_run=None,
 ) -> dict:
-    """Evaluate predictions, save CSV to reports/preds/, and log to W&B."""
+    """Evaluate predictions, save CSV to reports/preds/, and log to W&B.
+
+    wandb_run: an already-open run to log into (used by run_cv_experiment, so the
+    per-fold history and these final metrics live in ONE run). The caller owns that
+    run's lifecycle; this function only finishes runs it opened itself.
+    """
     y_true = df_meta["label"].to_numpy()
     records = df_meta["record"].to_numpy()
 
@@ -90,14 +123,19 @@ def evaluate_and_log(
     if use_wandb:
         import wandb
 
-        run = wandb.init(
-            project=wandb_project,
-            name=f"{model_name}_{split_type}",
-            config={"model": model_name, "split_type": split_type, **(config or {})},
-            reinit="finish_previous",
-        )
-        wandb.log(metrics)
-        run.finish()
+        if wandb_run is not None:
+            wandb_run.log(metrics)
+        else:
+            run = wandb.init(
+                project=wandb_project,
+                entity=wandb_entity,
+                name=f"{model_name}_{split_type}",
+                config={"model": model_name, "split_type": split_type, **(config or {})},
+                reinit="finish_previous",
+            )
+            wandb.log(metrics)
+            run.finish()
+            print(f"  wandb -> {run.url}")
 
     print(
         f"[{split_type} | {model_name}] "

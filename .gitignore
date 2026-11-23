@@ -1,8 +1,12 @@
 .venv/
 data/raw/
+data/processed/dl_cache/
 mlruns/
 mlartifacts/
 __pycache__/
 .ipynb_checkpoints/
+wandb/
 *.pyc
 .DS_Store
+models/
+.qwen

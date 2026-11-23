@@ -5,9 +5,11 @@ scipy
 matplotlib
 seaborn
 scikit-learn
+schedulefree==1.4.1
 wfdb
 neurokit2
 mlflow
+tqdm
 ipykernel
 jupyter
 wandb
