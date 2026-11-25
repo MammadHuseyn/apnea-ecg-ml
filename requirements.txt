@@ -14,3 +14,4 @@ ipykernel
 jupyter
 wandb
 tqdm
+torch
