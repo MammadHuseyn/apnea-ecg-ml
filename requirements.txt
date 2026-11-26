@@ -13,4 +13,9 @@ tqdm
 ipykernel
 jupyter
 wandb
+<<<<<<< HEAD
 mantis-tsfm
+=======
+tqdm
+torch
+>>>>>>> 38dff1ac7c54f4ae130bbd5a187366c166dde5ac
